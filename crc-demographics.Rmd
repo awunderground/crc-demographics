@@ -1,0 +1,534 @@
+---
+title: ""
+author: ""
+date: "`r format(Sys.time(), '%B %d, %Y %H:%M')`"
+output:
+  html_document:
+    self_contained: TRUE
+    code_folding: hide
+    toc: TRUE
+    toc_float: TRUE
+    toc_depth: 2
+    css: !expr here::here("www", "web_report.css")
+    editor_options:
+      chunk_output_type: console
+---
+
+<style>
+@import url('https://fonts.googleapis.com/css?family=Lato&display=swap');
+</style>
+
+<link rel="stylesheet" href="//fonts.googleapis.com/css?family=Lato" />
+
+![](www/images/urban-institute-logo.png)
+
+```{r rmarkdown-setup, echo = FALSE}
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+```
+
+```{r setup}
+options(scipen = 999)
+
+library(tidyverse)
+library(tidycensus)
+library(urbnthemes)
+library(patchwork)
+library(sf)
+
+set_urbn_defaults()
+
+```
+
+# [The Urban Institute](https://www.urban.org/)
+
+* Nonpartisan, nonprofit social and economic policy research institution in Washington, DC
+* Just celebrated our 50th birthday
+* About 575 people including economists, sociologists, urban planners, and data scientists
+* Elevate the debate through applied policy research, academic research, presentations, and expert testimony
+
+## Mission
+
+OUR MISSION IS TO OPEN MINDS, SHAPE DECISIONS, AND OFFER SOLUTIONS THROUGH ECONOMIC AND SOCIAL POLICY RESEARCH.
+
+> The Urban Institute is the trusted source for unbiased, authoritative insights that inform consequential choices about the well-being of people and places in the United States. We are a nonprofit research organization that believes decisions shaped by facts, rather than ideology, have the power to improve public policy and practice, strengthen communities, and transform people’s lives for the better.
+
+> Our experts diagnose current challenges and look ahead to identify opportunities for change. And we don’t stop there. We use our research findings to help stakeholders craft relevant solutions and strategies that address today’s concerns and avert tomorrow’s roadblocks. And we share our insights in real time with influencers eager to make smarter decisions.
+
+## Work
+
+The Urban Institute works on issues ranging from large federal programs like Social Security down to local issues like school funding and housing. We are divided into ten research teams:
+
+* Center on Education Data and Policy
+* Center on Labor, Human Services, and Population
+* Center on Nonprofits and Philanthropy
+* Health Policy Center
+* Housing Finance Policy Center
+* Income and Benefits Policy Center
+* Justice Policy Center
+* Metropolitan Housing and Communities Policy Center
+* Research to Action Lab
+* Urban-Brookings Tax Policy Center
+
+## What Does this Look Like?
+
+* [Tax Policy Center analysis of presidential candidate tax plans](https://www.nytimes.com/2016/10/12/us/politics/donald-trump-taxes-hillary-clinton.html)
+* [Health Policy Center analysis of insurance coverage for King vs. Burwell](https://www.urban.org/features/king-v-burwell)
+* Pioneers of [paired testing](https://www.urban.org/research/data-methods/data-analysis/quantitative-data-analysis/impact-analysis/paired-testing) and [microsimulation](https://www.urban.org/research/data-methods/data-analysis/quantitative-data-analysis/microsimulation)
+
+## [Aaron R. Williams](https://www.urban.org/author/aaron-r-williams)
+
+* Data Scientist in the Income and Benefits Policy Center
+* BS in Economics and BA in Music, with Honors, from VCU in 2014
+
+### Projects
+
+1. Develop microsimulation models to evaluate retiremen security and Social Security reform
+2. Generate synthetic tax data to broaden access to useful data for research
+3. Construct metrics at the county-level to evaluate economic and social mobility
+
+# Capital Region Demographics
+
+The Capital Region Collaborative includes:
+
+* Town of Ashland
+* Charles City County
+* Chesterfield County
+* Goochland County
+* Hanover County
+* Henrico County
+* New Kent County
+* Powhatan County
+* Richmond County
+
+**Note:** *Ashland is treated as part of Hanover for this analysis*
+
+## County and City Populations
+
+```{r}
+counties <- tribble(
+  ~county, ~fips,
+  "Charles City", "51036",
+  "Chesterfield", "51041",
+  "Goochland", "51075",
+  "Hanover", "51085",
+  "Henrico", "51087",
+  "New Kent", "51127",
+  "Powhatan", "51145",
+  "Richmond", "51760"
+)
+
+population <- bind_rows(
+  `2000` = get_decennial(geography = "county", variables = "P001001", year = 2000, state = "VA"),
+  `2010` = get_decennial(geography = "county", variables = "P001001", year = 2010, state = "VA"),
+  `2019` = get_estimates(geography = "county", product = "population", year = 2019, state = "VA"),
+  .id = "year"
+)  %>%
+  filter(GEOID %in% counties$fips)
+
+population %>%
+  filter(year == 2019,
+         variable != "DENSITY") %>%
+  mutate(NAME = str_replace(NAME, ", Virginia", "")) %>%
+  mutate(NAME = fct_reorder(NAME, value)) %>%  
+  ggplot(aes(y = NAME, value)) +
+  geom_col() +
+  scale_x_continuous(limits = c(0, 400000),
+                     expand = c(0, 0),
+                     labels = scales::comma) +
+  labs(title = "CRC County and City Populations in 2019",
+       x = "Population",
+       y = NULL,
+       caption = "Source: Census Bureau's Population Estimates Project") +
+  scatter_grid()
+```
+
+## County and City Population Growth
+
+```{r}
+population_change <- population %>%
+  filter(variable != "DENSITY") %>%
+  group_by(GEOID) %>%
+  mutate(change = value - lag(value),
+         prop_change = (value - lag(value)) / lag(value)) %>%
+  ungroup() %>%
+  filter(!is.na(prop_change))
+
+population_change2010 <- population_change %>%
+  filter(year == 2010) %>%
+  mutate(NAME = str_replace(NAME, ", Virginia", "")) %>%
+  mutate(NAME = fct_reorder(NAME, prop_change)) %>%
+  ggplot() +
+  geom_vline(aes(xintercept = 0)) +  
+  geom_col(aes(y = NAME, x = prop_change), position = "dodge") +
+  #geom_text(aes(y = NAME, x = prop_change - 0.01, label = scales::percent(prop_change)), color = "white") +
+  scale_x_continuous(expand = c(0, 0),
+                     limits = c(-0.1, 0.5),
+                     labels = scales::percent_format(accuracy = 5L)) +
+  labs(title = "Population Growth",
+       subtitle = "2000-2010",
+       x = "Percent Change in Population from 2000 to 2010",
+       y = NULL,
+       caption = NULL) +
+  scatter_grid()
+
+population_change2019 <- population_change %>%
+  filter(year == 2019) %>%
+  mutate(NAME = str_replace(NAME, ", Virginia", "")) %>%
+  mutate(NAME = fct_reorder(NAME, prop_change)) %>%
+  ggplot() +
+  geom_col(aes(y = NAME, x = prop_change), position = "dodge") +
+  geom_vline(aes(xintercept = 0)) +
+  #geom_text(aes(y = NAME, x = prop_change - 0.01, label = scales::percent(prop_change)), color = "white") +
+  scale_x_continuous(expand = c(0, 0),
+                     limits = c(-0.1, 0.5),
+                     labels = scales::percent_format(accuracy = 5L)) +  
+  labs(title = "",
+       subtitle = "2010-2019",
+       x = "Percent Change in Population from 2010 to 2019",
+       y = NULL,
+       caption = "Source: 2000 Census, 2010 Census, 2019 Population Estimates Project") +
+  scatter_grid()
+  
+population_change2010 + population_change2019
+
+```
+
+**Takeaway:** Richmond City was a laggard in population growth from 2000-2010 and a leader in population growth from 2010-2019.
+
+## Density
+
+```{r}
+population %>%
+  filter(variable == "DENSITY") %>%
+  mutate(NAME = str_replace(NAME, ", Virginia", "")) %>%
+  mutate(NAME = fct_reorder(NAME, value)) %>%
+  ggplot(aes(x = value, y = NAME)) +
+  geom_col() +
+  scale_x_continuous(limits = c(0, 4000),
+                     expand = c(0, 0),
+                     labels = scales::comma) +
+  labs(title = "Population Density is Very Low in the CRC--Even in Richmond City",
+       x = "Residents Per Square Mile, 2019",
+       y = NULL,
+       caption = "Census Population Estimates Project, 2019") +
+  scatter_grid()
+
+```
+
+| City | Residents Per Square Mile |
+| --- | ---- |
+| London, England | 14,670 |
+| Queens, NY | 20,907 |
+| Paris, France | 53,760 |
+| Manhattan, NY | 68,468 |
+
+**Source:** Wikipedia
+
+**Takeaway:** The CRC is sprawled and even Richmond, City has limited population density. Modest density and transit-oriented walkable neighborhoods are a key tool in mitigating climate change. 
+
+```{r pull-county-data, results = "hide"}
+
+var_list <- load_variables(2018, "acs5", cache = TRUE)
+
+vars <- tribble(
+  ~variable, ~var_name,
+  "B01003_001", "population",
+  "B19301_001", "pc_income",
+  "B06012_002", "poverty",
+  "B01002_001", "median_age",
+  "DP05_0077P", "nhw",
+  "DP02_0064P", "ed_ba",
+  "DP02_0065P", "ed_ma"
+)
+
+pull_acs <- function(state, variables, geography) {
+  get_acs(geography = geography,
+          variables  = variables,
+          year = 2018,
+          state = state,
+          geometry = TRUE,
+          progress = FALSE)
+}
+
+county_data <- pull_acs("VA", variables = vars$variable, geography = "county") %>%
+  filter(GEOID %in% counties$fips) %>%
+  left_join(vars, by = "variable") %>%
+  select(NAME,
+         fips = GEOID,
+         var_name,
+         estimate, 
+         geometry)
+
+counties_outline <- county_data %>%
+  filter(var_name == "population")
+
+county_labels <- county_data %>%
+  filter(var_name == "population") %>%
+  group_by(fips) %>%
+  summarize(centers = sf::st_centroid(geometry)) %>%
+  left_join(counties, by = "fips")
+
+new_point <- st_point(c(-77.3, 37.45))
+
+county_labels[county_labels$county == "Henrico", ]$centers[[1]] <- new_point
+
+
+```
+
+```{r pull-tract-data, results = "hide"}
+tracts_data <- pull_acs("VA", variables = vars$variable, geography = "tract") %>%
+  mutate(fips = str_sub(GEOID, 1, 5)) %>%
+  filter(fips %in% counties$fips) %>%
+  left_join(vars, by = "variable") %>%
+  select(NAME,
+         fips = GEOID,
+         var_name,
+         estimate, 
+         geometry)
+
+```
+
+## Ages {.tabset}
+
+**Takeaway:** The exurbs are much older than average in the CRC and Richmond, City is much younger than average.
+
+### Counties
+
+```{r fig.width = 10, fig.height = 6.5}
+
+ggplot() +
+  geom_sf(data = filter(county_data, var_name == "median_age"),
+          aes(fill = estimate), 
+          color = "white") +
+  geom_sf_text(data = county_labels, 
+               aes(label = county),
+               color = "white",
+               size = 5) +
+  scale_fill_gradientn() +
+  labs(fill = "Median Age",
+       caption = "Source: 2014-2018 5-Year American Community Survey") +
+  theme_urbn_map()
+
+```
+
+### Tracts
+
+```{r fig.width = 10, fig.height = 6.5}
+tracts_data %>%
+  filter(var_name == "median_age") %>%
+  ggplot() +
+  geom_sf(aes(fill = estimate), color = "white", size = 0.02) +
+  geom_sf(data = counties_outline, aes(), fill = NA, color = "white", size = 0.2) +
+  scale_fill_gradientn() +
+  labs(fill = "Median Age",
+       caption = "Source: 2014-2018 5-Year American Community Survey") +
+  theme_urbn_map()
+
+```
+
+## Highest level of education {.tabset}
+
+**Takeaway:** The CRC has high attainment of college degrees, but the degrees are highly concentrated in Northern Chesterfield County, Western Henrico County, and Western Richmond City.
+
+For reference, the national average is about 31.5%.
+
+### Counties
+
+```{r fig.width = 10, fig.height = 6.5}
+county_data %>%
+  filter(var_name %in% c("ed_ba", "ed_ma")) %>%
+  group_by(NAME, fips) %>%
+  summarize(ba_plus = sum(estimate)) %>%
+  mutate(ba_plus = ba_plus / 100) %>%
+  ggplot() +
+  geom_sf(aes(fill = ba_plus), color = "white") +
+  geom_sf_text(data = county_labels, 
+               aes(label = county),
+               color = "white",
+               size = 5) +  
+  scale_fill_gradientn(labels = scales::percent) +
+  labs(fill = "Share Ages 25+ with a BA or More",
+       caption = "Source: 2014-2018 5-Year American Community Survey") +
+  theme_urbn_map()
+
+```
+
+### Tracts
+
+```{r fig.width = 10, fig.height = 6.5}
+tracts_data %>%
+  filter(var_name %in% c("ed_ba", "ed_ma")) %>%
+  group_by(fips) %>%
+  summarize(ba_plus = sum(estimate)) %>%
+  mutate(ba_plus = ba_plus / 100) %>%
+  ggplot() +
+  geom_sf(aes(fill = ba_plus), color = "white", size = 0.02) +
+  geom_sf(data = counties_outline, aes(), fill = NA, color = "white", size = 0.2) +
+  scale_fill_gradientn(labels = scales::percent) +
+  labs(fill = "Share Ages 25+ with a BA or More",
+       caption = "Source: 2014-2018 5-Year American Community Survey") +
+  theme_urbn_map()
+
+```
+
+## Per Capita Income {.tabset}
+
+**Takeaway:** The CRC contains a wide range of per capita incomes. Much of the variation in incomes in the CRC is obfuscated at the county level.
+
+### Counties
+
+```{r fig.width = 10, fig.height = 6.5}
+county_data %>%
+  filter(var_name == "pc_income") %>%
+  ggplot() +
+  geom_sf(aes(fill = estimate), color = "white") +
+  geom_sf_text(data = county_labels, 
+               aes(label = county),
+               color = "white",
+               size = 5) +  
+  scale_fill_gradientn(labels = scales::dollar) +
+  labs(fill = "Per Capita Income",
+       caption = "Source: 2014-2018 5-Year American Community Survey") +
+  theme_urbn_map()
+
+```
+
+### Tracts
+
+```{r fig.width = 10, fig.height = 6.5}
+tracts_data %>%
+  filter(var_name == "pc_income") %>%
+  ggplot() +
+  geom_sf(aes(fill = estimate), color = "white", size = 0.02) +
+  geom_sf(data = counties_outline, aes(), fill = NA, color = "white", size = 0.2) +
+  scale_fill_gradientn(labels = scales::dollar) +
+  labs(fill = "Per Capita Income",
+       caption = "Source: 2014-2018 5-Year American Community Survey") +
+  theme_urbn_map()
+
+```
+
+## Race/Ethnicity {.tabset}
+
+**Takeaway:** The CRC and Richmond City are highly segregated.
+
+> Speaking of race and class, I must note another dramatic change in modern history. We are more segregated today than we were in the 18th and 19th centuries. During Richmond’s first 200 years, black and white residents were more interspersed with one another than they are now. There were black neighborhoods and white neighborhoods to be sure, but commingling was much more common then, most often for reasons related to where people worked.
+
+> It was not until the 20th century that Richmond became increasingly segregated, first by law and then by a combination of public policy and practices in the private sector. Beginning in the late ’60s and accelerating in the ’80s and ’90s, racial segregation morphed into socioeconomic segregation.
+
+~ [John Moeser](https://richmond.com/opinion/columnists/moeser-how-we-got-here-and-why-it-matters/article_498a5859-37aa-5457-8e50-8469a5afb5f8.html)
+
+### Counties
+
+```{r fig.width = 10, fig.height = 6.5}
+county_data %>%
+  filter(var_name == "nhw") %>%
+  mutate(estimate = estimate / 100) %>%
+  ggplot() +
+  geom_sf(aes(fill = estimate), color = "white") +
+  geom_sf_text(data = county_labels, 
+               aes(label = county),
+               color = "white",
+               size = 5) +  
+  scale_fill_gradientn(labels = scales::percent) +
+  labs(fill = "Share Non-Hispanic White",
+       caption = "Source: 2014-2018 5-Year American Community Survey") +
+  theme_urbn_map()
+
+```
+
+### Tracts
+
+```{r fig.width = 10, fig.height = 6.5}
+tracts_data %>%
+  filter(var_name == "nhw") %>%
+  mutate(estimate = estimate / 100) %>%
+  ggplot() +
+  geom_sf(aes(fill = estimate), color = "white", size = 0.02) +
+  geom_sf(data = counties_outline, aes(), fill = NA, color = "white", size = 0.2) +
+  scale_fill_gradientn(labels = scales::percent, limits = c(0, 1)) +
+  labs(fill = "Share Non-Hispanic White",
+       caption = "Source: 2014-2018 5-Year American Community Survey") +
+  theme_urbn_map()
+
+```
+
+## Poverty {.tabset}
+
+**Takeaway:** Poverty is heavily-concentrated in Eastern Chesterfield County, Eastern Richmond City, and Eastern Henrico County. 
+
+The race/ethnicity maps and the poverty maps look similar. [The concentration of poverty and lack of opportunity for the CRC's black residents, and segregartion were by design](https://richmond.com/news/local/williams-richmonds-segregation-is-by-design/article_7539dea6-9142-515a-9d56-c0adcd5f3fd1.html). 
+
+They are the result of explicitly racist neighborhoods and laws,  [redlining](http://dsl.richmond.edu/holc/pages/intro), Massive Resistance, highway construction that demolished successful black neighborhoods, racist housing practices, and more. 
+
+Too little has been done to unwind its devastation. 
+
+### Counties
+
+```{r fig.width = 10, fig.height = 6.5}
+county_poverty <- get_acs(geography = "county",
+        variables  = c(population = "B01003_001",
+                       poverty = "B06012_002"),
+        year = 2018,
+        state = "VA",
+        output= "wide",
+        geo = TRUE) %>%
+  filter(GEOID %in% counties$fips) %>%
+  mutate(poverty = povertyE / populationE)
+
+county_poverty %>%
+  ggplot() +
+  geom_sf(aes(fill = poverty), color = "white") +
+  geom_sf_text(data = county_labels, 
+               aes(label = county),
+               color = "white",
+               size = 5) +  
+  scale_fill_gradientn(labels = scales::percent,
+                       limits = c(0, 0.25)) +
+  labs(caption = "Source: 2014-2018 5-Year American Community Survey") +
+  theme_urbn_map()
+
+```
+
+### Tracts
+
+```{r fig.width = 10, fig.height = 6.5}
+tract_poverty <- get_acs(geography = "tract",
+        variables  = c(population = "B01003_001",
+                       poverty = "B06012_002"),
+        year = 2018,
+        state = "VA",
+        output= "wide",
+        geo = TRUE) %>%
+  mutate(fips = str_sub(GEOID, 1, 5)) %>%
+  filter(fips %in% counties$fips) %>%
+  mutate(poverty = povertyE / populationE)
+
+tract_poverty %>%
+  ggplot() +
+  geom_sf(aes(fill = poverty), color = "white", size = 0.02) +
+  geom_sf(data = counties_outline, aes(), fill = NA, color = "white", size = 0.2) +
+  scale_fill_gradientn(labels = scales::percent, limits = c(0, 0.8)) +
+  labs(fill = "",
+       caption = "Source: 2014-2018 5-Year American Community Survey") +
+  theme_urbn_map()
+
+```
+
+## Other Metrics
+
+Maps for other indicators like employment, health insurance coverage, and life expectancy will largely reflect the same patterns as the maps for poverty and race/ethnicity.
+
+## Overall Take Aways
+
+* The CRC is suburbanizing less rapidly than the in the past. 
+* Richmond City's population is growing and the western portion of Richmond City has high levels of education and high incomes. 
+* The CRC remains highly-segregated by race/ethnicity and poverty is highly concentrated.
+* [Lack of opportunity is concentrated in the Richmond Region](https://apps.urban.org/features/inclusion/index.html?city=richmond_VA), is the result of racist public policy, and persists because of bad public policy. 
+* The CRC is a great place to live for many of its residents. However, structural racism remains a defining feature that robs opportunity from many of residents. 
+
+## Additional Resources
+
+* [Additional demographics for Chesterfield, Henrico, and Richmond.](https://www.census.gov/quickfacts/fact/table/henricocountyvirginia,chesterfieldcountyvirginia,richmondcityvirginiacounty,US/PST045219)
+* [Measuring Inclusion in America's Cities](https://apps.urban.org/features/inclusion/index.html?topic=map)
